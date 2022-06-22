@@ -1,5 +1,5 @@
 ---
-title: Baker River Sockeye Inseason Forecast for Counts 5/1-12/31 @ Lower Baker Dam
+title: Baker River Sockeye Inseason Forecast for Counts 6/1-12/31 @ Lower Baker Dam
 author: Thomas Buehrens (tbuehrens@dfw.wa.gov) & Casey Ruff (cruff@swinomish.nsn.us)
 output:
   html_document:
@@ -60,6 +60,8 @@ packages_list<-c("tidyverse"
                  ,"smooth"
                  ,"scales"
                  ,"here"
+                 ,"MuMIn"
+                 ,"CombMSC"
                  )
 install_or_load_pack(pack = packages_list)
 ```
@@ -86,9 +88,9 @@ last_data<-as.Date("2021-07-12")
 #==================
 #forecasting params
 #==================
-leave_yrs<- 11
-covariates<-c("lag2_NPGO","lag1_log_SAR2","lag2_log_smolts","zl_flow") # "lag1_PDO","lag1_NPGO","lag2_PDO",,"pink_ind","zl_flow","lag1_log_SAR1"
-p1_covariates_only=c("zl_flow")
+leave_yrs<- 10#11
+covariates<-c("lag2_NPGO","lag1_log_SAR2","lag2_log_smolts","var_flow", "lag1_PDO","lag1_NPGO","lag2_PDO","pink_ind","lag1_log_SAR1","zl_flow")
+p1_covariates_only=c("var_flow","zl_flow")
 plot_results = F
 first_forecast_period = 2
 write_model_summaries = TRUE
@@ -164,25 +166,46 @@ Smolts<-read_csv(here("data","baker_sockeye_SAR.csv"))%>%
 
 
 #=========================================================
-#get flow data (might affect timing)
+#get mainstem and baker river flow data (might affect timing)
 #=========================================================
-flow_site<-12200500
-flow_url <- paste0("https://waterdata.usgs.gov/nwis/dv?&format=rdb&site_no=",flow_site,
-                   "&period=&begin_date=",yr_start,"-01-01",
-                   "&end_date=",yr_end,"-12-31")
-flow<-readr::read_delim(flow_url,comment = '#')%>%
-  filter(agency_cd=="USGS")%>%
-  dplyr::rename(date=datetime,CFS=`149429_00060_00003`)%>%
-  dplyr::select(date,CFS)%>%
-  mutate(date=ymd(date),CFS = as.numeric(CFS))
+ # flow_site<-12200500
+ # flow_url <- paste0("https://waterdata.usgs.gov/nwis/dv?&format=rdb&site_no=",flow_site,
+ #                    "&period=&begin_date=",yr_start,"-01-01",
+ #                    "&end_date=",yr_end,"-12-31")
+ # flow<-readr::read_delim(flow_url,comment = '#')%>%
+ #   filter(agency_cd=="USGS")%>%
+ #   dplyr::rename(date=datetime,CFS=`149429_00060_00003`)%>%
+ #   dplyr::select(date,CFS)%>%
+ #   mutate(date=ymd(date),CFS = as.numeric(CFS),flow_diff = log(lag(CFS,1)) - log(CFS))
+ # 
+ # 
+ # flow<-flow%>%
+ #   mutate(year=year(date),month=month(date),yday=yday(date))%>%
+ #   filter(yday <= yday(last_data) & yday >= yday(last_data-13))%>%
+ #   group_by(year)%>%
+ #   dplyr::summarise(zl_flow=mean(log(CFS),na.rm=T),var_flow=sd(flow_diff,na.rm=T),.groups = "keep")%>%
+ #  ungroup()%>%
+ #  mutate(zl_flow=as.vector(scale(zl_flow)),var_flow = as.vector(scale(var_flow)))
 
-flow<-flow%>%
-  mutate(year=year(date),month=month(date),yday=yday(date))%>%
-  filter(yday <= yday(last_data) & yday >= yday(last_data-13))%>%
-  group_by(year)%>%
-  dplyr::summarise(zl_flow=mean(log(CFS),na.rm=T), .groups = "keep")%>%
-  ungroup()%>%
-  mutate(zl_flow=scale(zl_flow))
+## try with baker river flows
+ flow_site<-12193400
+ flow_url <- paste0("https://waterdata.usgs.gov/nwis/dv?&format=rdb&site_no=",flow_site,
+                    "&period=&begin_date=",yr_start,"-01-01",
+                    "&end_date=",yr_end,"-12-31")
+ flow<-readr::read_delim(flow_url,comment = '#')%>%
+   filter(agency_cd=="USGS")%>%
+   dplyr::rename(date=datetime,CFS=`149403_00060_00003`)%>%
+   dplyr::select(date,CFS)%>%
+   mutate(date=ymd(date),CFS = as.numeric(CFS),flow_diff = log(lag(CFS,1)) - log(CFS))
+
+
+ flow<-flow%>%
+   mutate(year=year(date),month=month(date),yday=yday(date))%>%
+   filter(yday <= yday(last_data) & yday >= yday(last_data-13))%>%
+   group_by(year)%>%
+   dplyr::summarise(zl_flow=mean(log(CFS),na.rm=T),var_flow=sd(flow_diff,na.rm=T),.groups = "keep")%>%
+   ungroup()%>%
+   mutate(zl_flow=as.vector(scale(zl_flow)),var_flow = as.vector(scale(var_flow)))
 
 #================================================================
 dat<-dat%>%
@@ -229,9 +252,18 @@ series<-prepare_data(series = dat,
 ## Results
 This section present a a results table showing the performance of the prediction model in previous years as well as a forecast in the current year. The results in the table are graphed below.
 ```{r Analysis_v2, message=FALSE, warning=FALSE, results="show"}
+#best_covariates<-all_subsets(series=series$series,covariates=covariates,min=0,max=5)
+
+# best_covariates[[2]]%>%
+#   slice(1:10)%>%
+#   kbl(caption = "Table 1. Covariate Model Selection Results.",digits =3)%>%
+#   kable_classic(full_width = F, html_font = "Cambria")
+
+#best_covariates[[1]][[best_covariates[[2]]$model_num[1]]]
+
 results<-inseason_forecast(series$series,
-                  leave_yrs,
-                  covariates,
+                  leave_yrs=leave_yrs,
+                  covariates= c("lag2_NPGO","lag1_log_SAR2","lag2_log_smolts","var_flow","zl_flow"), #use to automate variable selection: best_covariates[[1]][[best_covariates[[2]]$model_num[1]]],
                   first_forecast_period = first_forecast_period,
                   plot_results = plot_results,
                   write_model_summaries = write_model_summaries,
@@ -256,14 +288,46 @@ results%>%
 print(paste0("Mean Absolute Percent Error (MAPE) = ",mean(abs((results$error/results$abundance)*100),na.rm = T)))
 print(paste0("Median Symmetric Accuracy; MSA) = ",100*(exp(median(abs(log(results$predicted_abundance/results$abundance)),na.rm = T))-1)))
 
+ISU_pct_error <- mean(abs((results$error/results$abundance)*100),na.rm = T) 
+ISU_msa <- 100*(exp(median(abs(log(results$predicted_abundance/results$abundance)),na.rm = T))-1)
 
-p<-ggplot(results,aes(x=year,y=predicted_abundance))+
-  geom_ribbon(aes(ymin=`Lo 95`,ymax=`Hi 95`),color=NA,alpha=0.5,fill = "cadetblue")+
-  geom_ribbon(aes(ymin=`Lo 50`,ymax=`Hi 50`),color=NA,alpha=0.5,fill = "cadetblue")+
+
+##load pre-season forecast performance table
+psf_performance <- read_csv("https://raw.githubusercontent.com/casruff/Salmon_Forecast_Example/test/sockeye_preseason_fcst_performance.csv")%>%
+  filter(Year %in% 2012:2021)%>%
+  mutate(type="PSF")%>%
+  rename(year = Year,predicted_abundance = Estimate,`Lo 95` = L95,`Hi 95` = U95)%>%
+  mutate(`Lo 50` = exp(log(predicted_abundance)- 0.675 * sd), `Hi 50` = exp(log(predicted_abundance)+ 0.675 * sd))%>%
+  left_join(results%>%dplyr::select(year,abundance))
+
+ISU_performance <- results %>%
+  filter(year %in% 2012:2020)
+
+psf_error <- psf_performance$predicted_abundance - ISU_performance$abundance
+psf_pct_error <- mean(abs((psf_error/ISU_performance$abundance)*100))
+psf_msa <- 100*(exp(median(abs(log(psf_performance$predicted_abundance/ISU_performance$abundance))))-1)  
+
+performance_comp <- data.frame(Method = c("PSF","ISU"),MAPE = c(psf_pct_error,ISU_pct_error),MSA = c(psf_msa,ISU_msa))
+
+
+performance_comp %>%
+kbl(caption = paste0("Table 3. Comparison of forecast performance of ISU using catch and Baker dam counts versus stack weighted pre-season forecast for years 2012 - 2020."),digits =3)%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+
+results<-results%>%
+  mutate(type="ISU")%>%
+  bind_rows(psf_performance)
+  
+p<-ggplot(results,aes(x=year,y=predicted_abundance,group=type))+ 
+  geom_ribbon(aes(ymin=`Lo 95`,ymax=`Hi 95`,fill=type),color=NA,alpha=0.5)+
+  geom_ribbon(aes(ymin=`Lo 50`,ymax=`Hi 50`,fill=type),color=NA,alpha=0.5)+
   geom_line()+
+  #geom_line(data = psf_performance,mapping=aes(x=year,y=predicted_performance), color = "red")+ 
   geom_point(aes(x=year,y=abundance))+
-  ylim(0,NA)+
-  scale_x_continuous(breaks=unique(results$year))
+  scale_x_continuous(breaks=unique(results$year))+
+  facet_wrap(~type,ncol=2)+
+  ylim(0,NA)
 
 print(p)
 ```

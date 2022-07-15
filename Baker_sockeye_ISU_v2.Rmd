@@ -80,27 +80,28 @@ Look at this section to see user inputs regarding the years and dates of data an
 # Raw Data
 #=========
 yr_start<-1992
-yr_end<-year(Sys.Date())-1
+yr_end<-year(Sys.Date())
 dam="Baker"
 species="Sock"
 #===========================
 # Summarization for analysis
 #===========================
 date_start_analysis<-ymd("1992/6/1") #this will be the first date of data used in the analysis (and this month/day first in years thereafter)
-date_end_analysis<-ymd("2021/12/31") #this will be the last date of data used in the analysis (and this month/day last in years preceding)
+date_end_analysis<-ymd("2022/12/31") #this will be the last date of data used in the analysis (and this month/day last in years preceding)
 forecast_period_start_m<-6 #this will be the month associated with the first month/day of the seasonal estimate period each year...can be after first data used to estimate it or the same
 forecast_period_start_d<-1 #this will be the month day associated with the first month/day of the seasonal estimate period each year...can be after first data used to estimate it or the same
 use_freshest_data = T #use all data up to "today" or only up to beginning of forecast period
-last_data<-as.Date("2021-07-12")
+last_data<-as.Date("2022-07-13")
 #==================
 #forecasting params
 #==================
-leave_yrs<- 10#11
+leave_yrs<- 11#11
 covariates<-c("lag2_NPGO","lag1_log_SAR2","lag2_log_smolts","var_flow", "lag1_PDO","lag1_NPGO","lag2_PDO","pink_ind","lag1_log_SAR1","zl_flow")
 p1_covariates_only=c("var_flow","zl_flow")
 plot_results = F
 first_forecast_period = 2
-write_model_summaries = FALSE
+write_model_summaries = TRUE
+find_best = F
 ```
 
 <!-- ## Get Raw Data -->
@@ -117,7 +118,7 @@ area78D5TravelTime <- 5
 
 
 dat<-read_csv(here("data","tbl_totalSockeyeCountByArea.csv"))%>%
-#   mutate(TreatyA8 = lag(TreatyA8,area8TravelTime),TreatyA78C = lag(TreatyA78C,area78CTravelTime),TreatyA78D2 = lag(TreatyA78D2,area78D2TravelTime),TreatyA78D3 = lag(TreatyA78D3,area78D3TravelTime),TreatyA78D478O = 
+#   mutate(TreatyA8 = lag(TreatyA8,area8TravelTime),TreatyA78C = lag(TreatyA78C,area78CTravelTime),TreatyA78D2 = lag(TreatyA78D2,area78D2TravelTime),TreatyA78D3 = lag(TreatyA78D3,area78D3TravelTime),TreatyA78D478O =
 # lag(TreatyA78D478O,area78D478OTravelTime),TreatyA78D5 = lag(TreatyA78D5,area78D5TravelTime),SportA78D2 = lag(SportA78D2
 # ,area78D2TravelTime),SportA78D478O = lag(SportA78D478O,area78D478OTravelTime)) %>%
 pivot_longer(-c("ID","CountDate","Comment"),names_to = "location",values_to = "count")%>%
@@ -242,7 +243,7 @@ timing<-dat%>%
   mutate(yday=yday(date))%>%
   group_by(year)%>%
   mutate(cumpct=cumsum(abundance)/sum(abundance),diff50=abs(0.5-cumpct),date50=ifelse(diff50==min(diff50),1,0))%>%
-  filter(date50==1)%>%
+  filter(date50==1 & year < yr_end)%>%
   summarise(yday=mean(yday))
 
 dat<-dat%>%
@@ -276,16 +277,10 @@ summarized_data<-prepare_data(series = dat,
 ## Results
 This section present a a results table showing the performance of the prediction model in previous years as well as a forecast in the current year. The results in the table are graphed below.
 ```{r Analysis_v2, message=FALSE, warning=FALSE, results="show"}
-# if(find_best ==T){
-#   best_covariates<-all_subsets(series=summarized_data$series,covariates=covariates,min=0,max=5)
-#   
-#   best_covariates[[2]]%>%
-#   slice(1:10)%>%
-#   kbl(caption = "Table 1. Covariate Model Selection Results.",digits =3)%>%
-#   kable_classic(full_width = F, html_font = "Cambria")
-#   
-#   saveRDS(best_covariates,"best_covariates_Baker.rds")
-# }
+if(find_best ==T){
+  best_covariates<-all_subsets(series=summarized_data$series,covariates=covariates,min=0,max=5)
+  saveRDS(best_covariates,"best_covariates_Baker.rds")
+}
 
 
 best_covariates<-readRDS("best_covariates_Baker.rds")
@@ -357,14 +352,14 @@ ISU_msa <- 100*(exp(median(abs(log(results_best$predicted_abundance/results_best
 
 ##load pre-season forecast performance table
 psf_performance <- read_csv("https://raw.githubusercontent.com/casruff/Salmon_Forecast_Example/test/sockeye_preseason_fcst_performance.csv")%>%
-  filter(Year %in% 2012:2021)%>%
+  #filter(Year %in% 2012:2021)%>%
   mutate(type="PSF")%>%
   rename(year = Year,predicted_abundance = Estimate,`Lo 95` = L95,`Hi 95` = U95)%>%
   mutate(`Lo 50` = exp(log(predicted_abundance)- 0.675 * sd), `Hi 50` = exp(log(predicted_abundance)+ 0.675 * sd))%>%
-  left_join(results_best%>%dplyr::select(year,abundance))
+  right_join(results_best%>%dplyr::select(year,abundance))
 
 ISU_performance <- results_best %>%
-  filter(year %in% 2012:2020)
+  filter(year %in% min(psf_performance$year):(max(psf_performance$year)-1))
 
 psf_error <- psf_performance$predicted_abundance - ISU_performance$abundance
 psf_pct_error <- mean(abs((psf_error/ISU_performance$abundance)*100))
